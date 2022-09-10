@@ -1,0 +1,40 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Course {
+  id        Int     @id @default(autoincrement())
+  fullName  String
+  shortName String
+  startDate Int
+  endDate   Int
+  viewUrl   String
+  events    Event[]
+}
+
+model Event {
+  id               Int      @id
+  name             String
+  description      String
+  moduleName       String
+  activityName     String
+  eventType        String
+  timeEnd          Int
+  timeDuration     Int
+  timeUserMidnight Int
+  timeModified     Int
+  course           Course   @relation(fields: [courseId], references: [id])
+  courseId         Int
+  viewUrl          String
+  sent             Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
