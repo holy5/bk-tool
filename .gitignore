@@ -1,5 +1,4 @@
 node_modules
 .env
 dist
-events.json
-response.json
+/src/jsons
