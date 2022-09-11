@@ -1,11 +1,13 @@
 import { Course } from "../interface/course.inteface";
 import { Groupedbycourse } from "../interface/event.interface";
+import { Message } from "../interface/messages.interface";
 import { parseStringInputToTime } from "./parseStringInputToTime";
 import prisma from "./prisma";
 import sendEmail from "./sendEmail";
 import {
-    getCalendarEventsByCourses,
-    getCoursesByTimeline,
+    fetchCalendarEventsByCourses,
+    fetchCoursesByTimeline,
+    fetchMessages,
 } from "./wsFunctions";
 
 export const writeCoursesToDb = async (courses: Course[]) => {
@@ -60,8 +62,26 @@ export const writeEventsToDb = async (eventGroup: Groupedbycourse[]) => {
     }
 };
 
+export const writeMessagesToDb = async (messages: Message[]) => {
+    for (let message of messages) {
+        await prisma.message.upsert({
+            where: {
+                id: message.id,
+            },
+            update: {},
+            create: {
+                id: message.id,
+                userFrom: message.userfromfullname,
+                userTo: message.usertofullname,
+                content: message.text,
+                messageHtml: message.fullmessagehtml || message.text,
+            },
+        });
+    }
+};
+
 export const getCoursesId = async (): Promise<number[]> => {
-    const courses = (await getCoursesByTimeline("inprogress")).courses;
+    const courses = (await fetchCoursesByTimeline("inprogress")).courses;
     await writeCoursesToDb(courses);
     const coursesIdObj = await prisma.course.findMany({
         select: {
@@ -76,22 +96,22 @@ export const getCoursesId = async (): Promise<number[]> => {
 
 export const getEvents = async (coursesIdArray: number[]) => {
     const groupedCoursesEvents = (
-        await getCalendarEventsByCourses(coursesIdArray)
+        await fetchCalendarEventsByCourses(coursesIdArray)
     ).groupedbycourse;
     await writeEventsToDb(groupedCoursesEvents);
 };
 
-export const notifyEvents = async (timeToNotify: string): Promise<void> => {
-    const parsedTimeToNotify =
-        parseStringInputToTime(timeToNotify) || parseStringInputToTime("1w");
-    if (parsedTimeToNotify) {
+export const notifyEvents = async (timeBeforeDue: string): Promise<void> => {
+    const parsedTimeBeforeDue =
+        parseStringInputToTime(timeBeforeDue) || parseStringInputToTime("1w");
+    if (parsedTimeBeforeDue) {
         const eventsDues = await prisma.event.findMany({
             where: {
                 AND: [
                     {
                         timeEnd: {
                             lte: Math.round(
-                                Date.now() / 1000 + parsedTimeToNotify
+                                Date.now() / 1000 + parsedTimeBeforeDue
                             ),
                         },
                     },
@@ -105,13 +125,27 @@ export const notifyEvents = async (timeToNotify: string): Promise<void> => {
             },
         });
         for (const eventDue of eventsDues) {
-            sendEmail({
+            const emailOptions = {
+                subject: `You have a due in ${eventDue.course.fullName}`,
                 content: eventDue.name,
-                subjectName: eventDue.course.fullName,
-                name: eventDue.name,
-                html: eventDue.description,
-                viewUrl: eventDue.viewUrl,
-            });
+                messageHtml: `
+                <div>
+                <h2>${eventDue.course.fullName}</h2>
+                <h3>${eventDue.name}</h3>
+                <h3>Description:</h3>
+                <p>${eventDue.description}</p>
+                <h3>See:</h3>
+                <a href=${eventDue.viewUrl}>${eventDue.viewUrl}</a>
+                </div>
+                `,
+            };
+            sendEmail(
+                {
+                    username: process.env.DUE_MAIL!,
+                    password: process.env.DUE_MAIL_PASSWORD!,
+                },
+                emailOptions
+            );
             await prisma.event.update({
                 where: {
                     id: eventDue.id,
@@ -121,5 +155,41 @@ export const notifyEvents = async (timeToNotify: string): Promise<void> => {
                 },
             });
         }
+    }
+};
+
+export const getMessages = async () => {
+    const messages = (await fetchMessages()).messages;
+    await writeMessagesToDb(messages);
+    return messages;
+};
+
+export const notifyMessages = async () => {
+    const messages = await prisma.message.findMany({
+        where: {
+            sent: false,
+        },
+    });
+    for (const message of messages) {
+        const emailOptions = {
+            subject: `Forwarded message from ${message.userFrom}`,
+            messageHtml: `<b>This is a forwarded message from ${message.userFrom} to ${message.userTo}</b>
+            ${message.messageHtml}`,
+        };
+        sendEmail(
+            {
+                username: process.env.BKEL_MAIL!,
+                password: process.env.BKEL_MAIL_PASSWORD!,
+            },
+            emailOptions
+        );
+        await prisma.message.update({
+            where: {
+                id: message.id,
+            },
+            data: {
+                sent: true,
+            },
+        });
     }
 };
