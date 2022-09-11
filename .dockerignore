@@ -1,4 +1,3 @@
 dist
 node_modules
-events.json
-response.json
+/src/jsons
